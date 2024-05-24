@@ -3,7 +3,17 @@ from psycopg2 import sql
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 import streamlit as st
 import sqlalchemy
-from sqlalchemy import create_engine, Table, Column, MetaData, select, String, Text,update
+from sqlalchemy import (
+    create_engine,
+    Table,
+    Column,
+    MetaData,
+    select,
+    String,
+    Text,
+    update,
+    delete,
+)
 import pandas as pd
 import uuid
 
@@ -11,29 +21,6 @@ import uuid
 database_url = "postgresql+psycopg2://postgres:admin@localhost:5432/bizcard"
 engine = create_engine(database_url, echo=False)
 schema = "bizcard"
-table_name = "user_details"
-
-# Create a metadata instance
-metadata = MetaData(schema=schema)
-
-# Define the table structure
-user_details_table = Table(
-    table_name,
-    metadata,
-    Column("bizcardky", String(length=255)),
-    Column("company_name", String(length=225)),
-    Column("card_holder", String(length=225)),
-    Column("designation", String(length=225)),
-    Column("mobile_number", String(length=50)),
-    Column("email", Text),
-    Column("website", Text),
-    Column("area", String(length=225)),
-    Column("city", String(length=225)),
-    Column("state", String(length=225)),
-    Column("pin_code", String(length=10)),
-    autoload_with=engine,
-    extend_existing=True,
-)
 
 
 def psql_client():
@@ -90,21 +77,55 @@ def create_database(schema):
             conn.close()
 
 
+def build_user_details_table():
+
+    table_name = "user_details"
+
+    # Create a metadata instance
+    metadata = MetaData(schema=schema)
+
+    # Define the table structure
+    user_details_table = Table(
+        table_name,
+        metadata,
+        Column("bizcardky", String(length=255)),
+        Column("company_name", String(length=225)),
+        Column("card_holder", String(length=225)),
+        Column("designation", String(length=225)),
+        Column("mobile_number", String(length=50)),
+        Column("email", Text),
+        Column("website", Text),
+        Column("area", String(length=225)),
+        Column("city", String(length=225)),
+        Column("state", String(length=225)),
+        Column("pin_code", String(length=10)),
+        autoload_with=engine,
+        extend_existing=True,
+    )
+
+    return user_details_table
+
+
 def saveCardData(data):
     # Fetch existing data from the database
     with engine.connect() as connection:
+        user_details_table = build_user_details_table()
         query = select(user_details_table)
         existing_data = pd.read_sql(query, connection)
 
-    unique_columns = ["company_name", "card_holder", "mobile_number"]
+    unique_columns = ["company_name", "card_holder", "mobile_number","email"]
 
     # Validate and filter new data to remove duplicates
-    filtered_data = data[
-        ~data.set_index(unique_columns).index.isin(
-            existing_data.set_index(unique_columns).index
-        )
-    ]
+    mask = data.apply(
+        lambda row: any(
+            existing_data[unique_col].eq(row[unique_col]).any()
+            for unique_col in unique_columns
+        ),
+        axis=1,
+    )
 
+    filtered_data = data[~mask]
+    
     try:
         if not filtered_data.empty:
             filtered_data["bizcardky"] = uuid.uuid4()
@@ -132,9 +153,9 @@ def saveCardData(data):
         else:
             st.toast("Card data already exists")
 
-    except:
+    except Exception as e:
 
-        st.toast("Card data already exists")
+        st.error(f"An error occurred: {e}")
 
 
 def getuserData():
@@ -164,34 +185,54 @@ def getuserData():
     finally:
         if conn:
             conn.close()
-#update data
+
+
+# update data
 def update_database(edited_data, uuid_mapping, connection):
     # Merge edited data with uuid_mapping to get UUIDs back
     updated_data = edited_data.join(uuid_mapping)
     for index, row in updated_data.iterrows():
+        user_details_table = build_user_details_table()
         stmt = (
             update(user_details_table)
-            .where(user_details_table.c.bizcardky == row['bizcardky'])
+            .where(user_details_table.c.bizcardky == row["bizcardky"])
             .values(
-                company_name=row['company_name'],
-                card_holder=row['card_holder'],
-                designation=row['designation'],
-                mobile_number=row['mobile_number'],
-                email=row['email'],
-                website=row['website'],
-                area=row['area'],
-                city=row['city'],
-                state=row['state'],
-                pin_code=row['pin_code']
+                company_name=row["company_name"],
+                card_holder=row["card_holder"],
+                designation=row["designation"],
+                mobile_number=row["mobile_number"],
+                email=row["email"],
+                website=row["website"],
+                area=row["area"],
+                city=row["city"],
+                state=row["state"],
+                pin_code=row["pin_code"],
             )
         )
         connection.execute(stmt)
     connection.commit()
-     
-            
-def saveData(edited_data,uuid_mapping):
+
+
+# delete data
+def delete_rows_from_db(rows_to_delete, connection):
+    for row in rows_to_delete:
+        user_details_table = build_user_details_table()
+        stmt = delete(user_details_table).where(user_details_table.c.bizcardky == row)
+        connection.execute(stmt)
+    connection.commit()
+
+
+def delete_data(deleted_data, uuid_mapping):
+    if deleted_data:
+        uuids = uuid_mapping[["bizcardky"]].copy()
+        uuids.index = uuids.index - 1
+        data_to_delete = uuids.loc[deleted_data, "bizcardky"].tolist()
+        with engine.connect() as connection:
+            delete_rows_from_db(data_to_delete, connection)
+            st.toast("Data Deleted Successfully")
+
+
+def saveData(edited_data, uuid_mapping):
     with engine.connect() as connection:
         update_database(edited_data, uuid_mapping, connection)
         st.toast("Database Updated Successfully")
- 
-

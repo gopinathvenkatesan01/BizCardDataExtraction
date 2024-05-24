@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 from dataservice import get_data
-from sql import getuserData, init, saveCardData, saveData
+from sql import delete_data, getuserData, init, saveCardData, saveData
 from streamlit import data_editor
 
 
@@ -32,6 +32,7 @@ def main():
     )
     tab1, tab2 = st.tabs(["Data Extraction", "Data modification"])
     with tab1:
+        st.session_state.data_uploaded = False
         if fl:
             if "image" in fl.type:
                 img1, img2 = st.columns([1, 1])
@@ -56,20 +57,36 @@ def main():
                 data = get_data(result)
                 # Create dataframe
                 data_df = pd.DataFrame(data)
-
                 # Show dataframe
-                saveCardData(data_df)
+                data_df.index = data_df.index + 1
+                st.dataframe(data_df)
+                if st.button("Upload Data"):
+                    st.session_state.data_uploaded = True
+
+                    if st.session_state.data_uploaded:
+                        saveCardData(data_df)
+                        st.session_state.data_uploaded = False
 
             else:
                 st.warning("Please Provide a Valid Image!")
+                
     with tab2:
+        st.session_state.save_data = False
         userDetailsdata = getuserData()
         userDetailsdata.index = userDetailsdata.index + 1
         uuid_mapping = userDetailsdata[["bizcardky"]].copy()
         display_data = userDetailsdata.drop(columns=["bizcardky"])
-        edited_data = st.data_editor(display_data, key="my_key")
+        edited_data = st.data_editor(display_data, key="my_key", num_rows="dynamic")
+
         if st.button("Save Data"):
-            saveData(edited_data, uuid_mapping)
+            st.session_state.save_data = True
+            if st.session_state.save_data:
+                # Access the deleted_rows
+                deleted_rows = st.session_state["my_key"].get("deleted_rows", [])
+                saveData(edited_data, uuid_mapping)
+                delete_data(deleted_rows,uuid_mapping)
+                st.session_state.save_data = False
+                st.experimental_rerun()
 
 
 def draw_image(image):
@@ -80,13 +97,13 @@ def draw_image(image):
     return plt
 
 
-
-def draw_text(image_with_boxes, text_read):
-    image_with_text = np.array(image_with_boxes)
+def draw_text(image, text_read):
+    gray_image = cv2.cvtColor(np.array(image), cv2.COLOR_BGR2GRAY)
+    image_with_text = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
     color = (0, 255, 0)  # Green color for both text and bounding boxes
     width = 2  # Width of the bounding box lines
-    text_colour = color  
-    spacer = 100  
+    text_colour = color
+    spacer = 100
 
     for bound, text, prob in text_read:
         p0, p1, p2, p3 = bound
@@ -117,7 +134,6 @@ def draw_text(image_with_boxes, text_read):
         spacer += 15
 
     return image_with_text
-
 
 
 if __name__ == "__main__":
