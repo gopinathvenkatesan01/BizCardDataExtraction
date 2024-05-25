@@ -69,7 +69,7 @@
 
 #### c) Load data
 
-* After the transformation process, the data is stored in the MySQL database.
+* After the transformation process, the data is stored in the PostgresSQL database.
 
 ## User Guide
 
